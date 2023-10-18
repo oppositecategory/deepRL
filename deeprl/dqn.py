@@ -1,33 +1,8 @@
-import gymnasium as gym
-
 import torch
 import torch.nn as nn
-from torch.distributions.categorical import Categorical
-from torch.distributions.uniform import Uniform
 from torch.optim import Adam
-
 import numpy as np 
-from tqdm import tqdm
 
-import matplotlib as mpl
-import matplotlib.pyplot as plt
-mpl.use('tkagg')
-
-env = gym.make("CarRacing-v2",
-              #render_mode='human',
-               continuous=False)
-env.action_space.seed(42)
-
-# Important hyper-parameters
-state_dim = env.observation_space.shape[0]
-action_space = env.action_space
-epsilon= 0.01
-batch_size= 50000
-N_buffer= 1000
-minibatch_size=32
-gamma = 0.99
-lr = 1e-2
-num_epochs = 10
 
 def conv_block(in_f, out_f, kernel_size, stride):
     return nn.Sequential(
@@ -55,7 +30,8 @@ class QNetwork(nn.Module):
                  input_dim=(96,96,1),
                  filters=[(16,8,4),(32,3,2)], 
                  hidden_dim=[256],
-                 output_dim=5):
+                 output_dim=5,
+                 minibatch_size=32):
         """
             Implement a Deep-Q Network with the Replay Buffer encapuslated in it aswell.
             Arguments:
@@ -73,6 +49,7 @@ class QNetwork(nn.Module):
         super().__init__()
         self.N_buffer = N_buffer
         self.memory_index = 0 # Works modulo N_buffer
+        self.minibatch_size = minibatch_size
 
         self.m_state = torch.zeros(N_buffer,input_dim[0],input_dim[0], dtype=torch.float32)
         self.m_action = torch.zeros(N_buffer,dtype=torch.long)
@@ -116,83 +93,24 @@ class QNetwork(nn.Module):
             self.m_state1[self.memory_index,:,:] = s[3]
         self.memory_index = (self.memory_index + 1) % self.N_buffer
 
-    def sample_experiences(self):
-        indices = torch.randint(0, self.N_buffer,size=(minibatch_size,))
-        s_samples = self.m_state[indices,:,:]
-        s_actions = self.m_action[indices]
-        s_rewards = self.m_reward[indices]
-        s_samples1 = self.m_state1[indices,:,:]
-        return (s_samples,s_actions,s_rewards,s_samples1)
-
-network = QNetwork()
-optimizer = Adam(network.parameters(), lr=lr)
-
-@torch.no_grad()
-def process_experience_data(batch):
-    batch_state, batch_action, batch_reward,batch_next_s = batch
-    mask_next_s = torch.count_nonzero(batch_next_s,dim=(-2,-1))
-    return_approx = network(batch_next_s[:,None,:,:]).argmax(dim=1)
-    X = batch_state 
-    y = batch_reward[0] + mask_next_s[...,0] * return_approx
-    return X, batch_action, y
     
-def train_epoch():
-    obs, info = env.reset()
+    @torch.no_grad()
+    def sample_and_process_replay(self):
+        # Util function to sample mini-batch from the history and process it
+        # into a form usable for training the Q-network.
+        indices = torch.randint(0, self.N_buffer,size=(self.minibatch_size,))
+        batch_state = self.m_state[indices,:,:]
+        batch_action = self.m_action[indices]
+        batch_reward = self.m_reward[indices]
+        batch_next_s = self.m_state1[indices,:,:]
 
-    episode_rewards = []
-    rewards = []
-    avg_batch_loss = []
-    for frame in tqdm(range(batch_size)):
-        phi_curr = torch.tensor(rgb2gray(obs)[None,:,:],dtype=torch.float32)
-
-        if np.random.binomial(1,epsilon,1):
-            action = env.action_space.sample()
-        else:
-            action = network(phi_curr).argmax().item()
-
-        next_obs, reward, terminated, truncated, info = env.step(action)
-        rewards.append(reward)
-
-        if terminated or truncated:
-            obs, info = env.reset()
-            episode_rewards.append(np.mean(rewards))
-            rewards = []
-            phi_next = None
-        else:
-            phi_next = torch.tensor(rgb2gray(next_obs)[None,:,:],dtype=torch.float32)
-
-        s = (phi_curr, action, reward, phi_next)
-        network.store_experience(s)
-
-        if frame < minibatch_size:
-            continue
+        mask_next_s = torch.count_nonzero(batch_next_s,dim=(-2,-1))
+        with torch.no_grad():
+            return_approx = self.forward(batch_next_s[:,None,:,:]).argmax(dim=1)
         
-        batch = network.sample_experiences()
-        X,actions,y = process_experience_data(batch)
+        X = batch_state 
+        y = batch_reward[0] + mask_next_s[...,0] * return_approx
+        return X, batch_action, y
+    
 
-        optimizer.zero_grad()
-        output = network(X[:,None,:,:])
-        output = output[range(minibatch_size),actions.long()]
-        batch_loss = ((output - y) ** 2).mean()
-
-        avg_batch_loss.append(batch_loss.item())
-        batch_loss.backward()
-        optimizer.step()
-    avg_episode_reward = np.mean(episode_rewards)
-    return avg_batch_loss,avg_episode_reward
-
-plt.ion()
-# figure, ax = plt.subplots(figsize=(10, 8))
-plt.title("Average Q")
-plt.xlabel("Training Epochs")
-plt.ylabel("Average action value")
-
-plt.axis([0,num_epochs,0,10])
-
-
-for epoch in range(num_epochs):
-    avg_batch_loss, avg_episode_reward = train_epoch()
-    plt.plot(epoch,avg_episode_reward)
-    plt.pause(0.05)
-
-plt.show()
+  
