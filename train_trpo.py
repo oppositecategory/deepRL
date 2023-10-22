@@ -73,4 +73,6 @@ def train_epoch():
     policy_loss = trpo_update(policy,value_net,observations,actions, returns, mask,gamma)
     value_loss = update_value_network(value_net,value_optimizer, observations,returns)
  
-train_epoch()
+
+for i in range(num_epochs):
+    train_epoch()

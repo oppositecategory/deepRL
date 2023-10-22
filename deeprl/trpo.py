@@ -213,5 +213,5 @@ def update_value_network(network,optimizer, obs, returns):
 
     loss_fn.backward()
     optimizer.step()    
-    print("Value function loss:", loss_fn)
+    print("Value function loss:", loss_fn.item())
     return loss_fn.item()
