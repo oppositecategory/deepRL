@@ -101,16 +101,18 @@ def backtrack_line_search(model,f,grad_f,x,p,alpha_0,c=0.1,max=10):
             - c: control parameter
 
         This is a bit of a specific variation of the algorithm. Instead of introducting another parameter tau as the shrinkage pace we use exponents of alpha and return the smallest exponent j, such as alpha^j minmize the function as desired.
+
+        TODO: Detect bug in unchanged loss. It might be because the internal parameters aren't actually reached by set_flat_params.
     """
     m = torch.dot(grad_f,p)
     alpha = alpha_0
-    initial_loss = -f(False).data
+    initial_loss = f(False).data
     t = -c*m
     for j in range(max):
         candidate_params = x + alpha*p
         set_flat_params_to(model, candidate_params)
-        curr_loss = -f(False).data
-        print(f"{j}/{max} Expected loss: {initial_loss - alpha*t} Current loss: {-curr_loss}")
+        curr_loss = f(False)
+        print(f"{j}/{max} Current loss: {curr_loss}")
         if initial_loss - curr_loss >= alpha*t:
             return True, candidate_params
         alpha = alpha*alpha
@@ -163,10 +165,11 @@ def trpo_update(policy, value_net, observations, actions, returns, mask,gamma):
 
     def loss_fn(grad=True):
         if grad:
-            return (torch.exp(actions_probs - actions_probs_old) * advantages).mean()
+            actions_probs = policy.log_probs(obs_t,actions_t)
         else:
             with torch.no_grad():
-                return (torch.exp(actions_probs - actions_probs_old) * advantages).mean()
+                actions_probs = policy.log_probs(obs_t,actions_t)
+        return -(torch.exp(actions_probs - actions_probs_old) * advantages).mean()
 
     # Policy gradient with respect to the loss function.
     loss = loss_fn()
@@ -174,28 +177,28 @@ def trpo_update(policy, value_net, observations, actions, returns, mask,gamma):
     g_vect = torch.cat([grad.contiguous().view(-1) for grad in g])
 
     # Approximate the inverse Hessian of the KL divergence using CG algorithm.
-    direction = conjugate_gradient(Hv, g_vect,10)
+    direction = conjugate_gradient(Hv, -g_vect,10)
 
     # To handle cases of NaN resulting from floating-point errors it seems
     # it's better to swap the denomanator and numerator to reduce risk of NaN.
     # The numerator is 0.02~delta*2 which is >>> then the gradients with higher probability for exploding.
-    denom = 0.5*torch.dot(direction,g_vect)
+    denom = 0.5*torch.dot(direction,-g_vect)
     step_size = torch.sqrt(denom/policy.KL_bound)      
     
     if torch.isnan(step_size):
         print("Floating point error using LR=0.001")
-        full_step = 1e-3 * step_size
+        full_step = 1e-3 * direction
     else:
         full_step = direction / step_size
 
     old_params = get_model_params(policy)   
     success, new_params= backtrack_line_search(policy, 
                                                loss_fn,
-                                               g_vect,
+                                               -g_vect,
                                                old_params,
                                                full_step,
                                                policy.backtrack_coeff)
 
     set_flat_params_to(policy, new_params)
-    print(f"grad_norm: {g_vect.norm()} average return: {rewards_t.mean()}")
+    print(f"grad_norm: {-g_vect.norm()} average return: {rewards_t.mean()}")
     return loss
