@@ -31,17 +31,18 @@ value_net = nn.Sequential(
                 nn.ReLU(),
                 nn.Linear(256,1)
 )
+value_optimizer = Adam(value_net.parameters(), lr=1e-3)
 policy = Policy(input_dim=state_dim,
                 output_dim=action_space)
 
-
-def generate_testing_data():
+def test_trpo():
     observations = [np.random.rand(96,96,3) for i in range(50)]
     actions = [np.random.randint(0,action_space,size=(1,)) for i in range(50)]
     rewards = [np.random.normal(loc=torch.tensor(0.), scale=0.1) for i in range(50)]
     returns = list(reward_to_go(rewards))
     mask = [1 if i < 49 else 0 for i in range(50)]
-    return observations, action_space,rewards, returns, mask
+
+    trpo_update(policy,value_net,observations,actions, returns, mask,gamma)
 
 def train_epoch():
     obs, info = env.reset()
@@ -69,6 +70,7 @@ def train_epoch():
         else:
             mask.append(1)
 
-    trpo_update(policy,value_net,observations,actions, returns, mask,gamma)
+    policy_loss = trpo_update(policy,value_net,observations,actions, returns, mask,gamma)
+    value_loss = update_value_network(value_net,value_optimizer, observations,returns)
  
 train_epoch()

@@ -99,18 +99,15 @@ def backtrack_line_search(model,f,grad_f,x,p,alpha_0,c=0.1,max=10):
             - p: search direction
             - alpha_0: initial step size guess
             - c: control parameter
-
-        This is a bit of a specific variation of the algorithm. Instead of introducting another parameter tau as the shrinkage pace we use exponents of alpha and return the smallest exponent j, such as alpha^j minmize the function as desired.
-
-        TODO: Detect bug in unchanged loss. It might be because the internal parameters aren't actually reached by set_flat_params.
     """
     m = torch.dot(grad_f,p)
     alpha = alpha_0
     initial_loss = f(False).data
     t = -c*m
     for j in range(max):
-        candidate_params = x + alpha*p
+        candidate_params = x + alpha * p
         set_flat_params_to(model, candidate_params)
+        curr = get_model_params(model)
         curr_loss = f(False)
         print(f"{j}/{max} Current loss: {curr_loss}")
         if initial_loss - curr_loss >= alpha*t:
@@ -164,6 +161,9 @@ def trpo_update(policy, value_net, observations, actions, returns, mask,gamma):
     actions_probs_old = actions_probs.data
 
     def loss_fn(grad=True):
+        # NOTE: The loss function is returned as negative due to the linesearch.
+        #       However the sign change is consistent throughout, that is we use -grad
+        #       because the direction is now changed.
         if grad:
             actions_probs = policy.log_probs(obs_t,actions_t)
         else:
@@ -202,3 +202,16 @@ def trpo_update(policy, value_net, observations, actions, returns, mask,gamma):
     set_flat_params_to(policy, new_params)
     print(f"grad_norm: {-g_vect.norm()} average return: {rewards_t.mean()}")
     return loss
+
+def update_value_network(network,optimizer, obs, returns):
+    obs_t = torch.Tensor(np.array(obs))
+    returns = torch.Tensor(returns)
+    values = network(torch.flatten(obs_t,1,-1))
+
+    optimizer.zero_grad() 
+    loss_fn = ((values - returns)**2).mean()
+
+    loss_fn.backward()
+    optimizer.step()    
+    print("Value function loss:", loss_fn)
+    return loss_fn.item()
