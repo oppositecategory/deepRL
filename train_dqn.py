@@ -78,5 +78,5 @@ def train_epoch():
     avg_episode_reward = np.mean(episode_rewards)
     return avg_batch_loss,avg_episode_reward
 
-train_epoch()
+# train_epoch()
   

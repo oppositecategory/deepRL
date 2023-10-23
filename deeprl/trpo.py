@@ -6,47 +6,18 @@ from torch.autograd.functional import hessian
 
 from .utils import *
 
-class Policy(nn.Module):
+class Policy(ConvNet):
     def __init__(self, 
-                 input_dim,
-                 output_dim,
-                 KL_bound=0.001,
-                 backtrack_coeff = 0.8,
-                 filters=[(16, 4,2)],   
-                 hidden_dim=256):
-        super().__init__()
+                input_dim,
+                output_dim,
+                KL_bound=0.001,
+                backtrack_coeff = 0.8,
+                filters=[(16, 4,2)],   
+                hidden_dim=128):
+        super().__init__(input_dim,output_dim,filters,hidden_dim)
         self.KL_bound = torch.Tensor([KL_bound])
         self.backtrack_coeff = torch.Tensor([backtrack_coeff])
 
-        in_channels = [input_dim[2]] + [f[0] for f in filters] # [4,16,32]
-        kernels_size = [f[1] for f in filters] # [8,4]
-        strides = [f[2] for f in filters] # [4,2]
-        
-        conv_blocks = [
-            conv_block(in_channels[i],in_channels[i+1],kernels_size[i],strides[i])
-            for i in range(len(kernels_size))
-        ]   
-
-        self.conv_net = nn.Sequential(
-            *conv_blocks
-        )
-
-        self.conv_rep = (conv_output_size(input_dim[0],filters) ** 2) * filters[-1][0]
-        self.fc_layer = nn.Sequential(
-            nn.Linear(self.conv_rep, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim,hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim,output_dim)
-        )
-
-    def forward(self, x):
-        x = self.conv_net(x)
-        # x = x.view(-1,self.conv_rep)
-        x = torch.flatten(x,1,-1)
-        x = self.fc_layer(x)
-        return x
-    
     def sample_action(self, x):
         logits = self.forward(x)
         action = Categorical(logits=logits).sample().item()
@@ -58,10 +29,11 @@ class Policy(nn.Module):
         log_probs = actions_distribution.log_prob(actions_t)
         return log_probs
 
+
 @torch.no_grad()
 def estimate_advantage(value_net,states, rewards, actions, masks,gamma):
     # Estimating the advantage using a Value func approximator and TD difference.
-    values = value_net(torch.flatten(states,1,-1))
+    values = value_net(states)
     advantages = torch.zeros(states.size(0),1)
 
     for i in range(states.size(0)-1):
@@ -204,14 +176,13 @@ def trpo_update(policy, value_net, observations, actions, returns, mask,gamma):
     return loss
 
 def update_value_network(network,optimizer, obs, returns):
-    obs_t = torch.Tensor(np.array(obs))
+    obs_t = torch.Tensor(np.array(obs)).permute(0,3,1,2)
     returns = torch.Tensor(returns)
-    values = network(torch.flatten(obs_t,1,-1))
+    values = network(obs_t)
 
     optimizer.zero_grad() 
-    loss_fn = ((values - returns)**2).mean()
-
+    loss_fn = ((values - returns).pow(2)).mean()
+    print("Value function loss:", loss_fn.item())
     loss_fn.backward()
     optimizer.step()    
-    print("Value function loss:", loss_fn.item())
     return loss_fn.item()

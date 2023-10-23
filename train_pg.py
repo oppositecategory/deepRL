@@ -10,18 +10,19 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 mpl.use('tkagg')
 
-"""
-NOTE: This is written using the old gym repo and not the updated gymnaisum.
-"""
+from deeprl.policy_gradient import policy_gradient_update
+from deeprl.utils import reward_to_go
 
-env = gym.make('CartPole-v0')
+#NOTE: This is written using the old gym repo and not the updated gymnaisum.
+
+env = gym.make('CartPole-v1')
 env.action_space.seed(42)
 
 state_dim = env.observation_space.shape[0]
 hidden_dim = 64
 action_space = env.action_space.n
 lr = 1e-2
-batch_size = 5000
+batch_size = 5000 # Num of rollouts/trajectories
 epochs = 50
 
 network = nn.Sequential(
@@ -33,22 +34,8 @@ network = nn.Sequential(
 )
 optimizer = Adam(network.parameters(), lr=lr)
 
-def reward_to_go(rews):
-    n = len(rews)
-    rtgs = np.zeros_like(rews)
-    for i in reversed(range(n)):
-        rtgs[i] = rews[i] + (rtgs[i+1] if i+1 < n else 0)
-    return rtgs
-
 def policy_train_epoch():
-    """
-        The function carries out an epoch of training; a batch here means a number of rollouts/episodes 
-        where it's rollout length is arbitrary. 
-
-        The gradient is calculated at the end of the function but with the data gathered over all the episodes
-        carried out.
-    """
-    obs = env.reset()
+    obs, _ = env.reset()
     terminated = False
     finished_rendering_this_epoch = False
     
@@ -88,28 +75,14 @@ def policy_train_epoch():
             if len(observations) > batch_size:
                 break
 
-    optimizer.zero_grad()
-    # NOTE: Because we need the backwards() to calculate
-    # the gradient of the logits with respect to the network's 
-    # parameters, we need to re-evaluate the network at the captured observations as otherwise they are detached.
-    obs_tensor = torch.tensor(observations,
-                              dtype=torch.float32)
-    actions_tensor = torch.tensor(actions,
-                                  dtype=torch.int32)
-    returns = torch.tensor(returns,
-                           dtype=torch.float32)
-
-    logits = network(obs_tensor)
-    actions_distribution = Categorical(logits=logits)
-    log_probs = actions_distribution.log_prob(actions_tensor)
-    batch_loss = -(log_probs * returns).mean()
-
-    batch_loss.backward()
-    optimizer.step()
+    batch_loss, batch_returns, batch_lens = policy_gradient_update(network, 
+                                                                   optimizer,
+                                                                   observations, 
+                                                                   actions, 
+                                                                   returns)
     return batch_loss, batch_returns,batch_lens
 
 plt.ion()
-# figure, ax = plt.subplots(figsize=(10, 8))
 plt.title("Average return value over epoch")
 plt.xlabel("Epoch")
 plt.ylabel("Return value")

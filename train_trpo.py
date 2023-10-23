@@ -19,21 +19,20 @@ state_dim = env.observation_space.shape
 action_space = env.action_space.n
 batch_size= 2000
 num_epochs = 10
+
 gamma = 0.9954
 KL_bound = 1e-2
 backtrack_coeff = 0.8
 damping = 1 
+l2_value = 1e-3
 
-value_net = nn.Sequential(
-                nn.Linear(np.prod(state_dim), 256),
-                nn.ReLU(),
-                nn.Linear(256,256),
-                nn.ReLU(),
-                nn.Linear(256,1)
-)
-value_optimizer = Adam(value_net.parameters(), lr=1e-3)
 policy = Policy(input_dim=state_dim,
                 output_dim=action_space)
+
+value_net = ConvNet(input_dim=state_dim,
+                    output_dim=1,
+                    hidden_dim=64)
+value_optimizer = Adam(value_net.parameters(), lr=l2_value)
 
 def test_trpo():
     observations = [np.random.rand(96,96,3) for i in range(50)]
@@ -43,6 +42,7 @@ def test_trpo():
     mask = [1 if i < 49 else 0 for i in range(50)]
 
     trpo_update(policy,value_net,observations,actions, returns, mask,gamma)
+    value_loss = update_value_network(value_net,value_optimizer, observations,returns)
 
 def train_epoch():
     obs, info = env.reset()
@@ -54,7 +54,7 @@ def train_epoch():
     for frame in tqdm(range(batch_size)):
         observations.append(obs.copy())
         action = policy.sample_action(torch.as_tensor(obs,dtype=torch.float32).permute(2,0,1).unsqueeze(0))
-        values = value_net(torch.as_tensor(obs,dtype=torch.float32).view(-1))
+        values = value_net(torch.as_tensor(obs,dtype=torch.float32).permute(2,0,1).unsqueeze(0))
 
         obs, reward, terminated, truncated, info = env.step(action)
 
