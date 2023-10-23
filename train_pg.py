@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-from torch.distributions.categorical import Categorical
 from torch.optim import Adam
 import gym
 from gym.spaces import Discrete, Box
