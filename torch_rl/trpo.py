@@ -36,7 +36,7 @@ def estimate_advantage(value_net,states, rewards, actions, masks,gamma):
     values = value_net(states)
     advantages = torch.zeros(states.size(0),1)
 
-    for i in range(states.size(0)-1):
+    for i in range(values.size(0)-1):
         advantages[i,0] = rewards[i] + gamma* values[i+1] - masks[i] * values[i]
     return advantages
 
@@ -155,13 +155,13 @@ def trpo_update(policy, value_net, observations, actions, returns, mask,gamma):
     # it's better to swap the denomanator and numerator to reduce risk of NaN.
     # The numerator is 0.02~delta*2 which is >>> then the gradients with higher probability for exploding.
     denom = 0.5*torch.dot(direction,-g_vect)
-    step_size = torch.sqrt(denom/policy.KL_bound)      
+    step_size = torch.sqrt(abs(denom)/policy.KL_bound)      
     
     if torch.isnan(step_size):
-        print("Floating point error using LR=0.001")
-        full_step = 1e-3 * direction
-    else:
-        full_step = direction / step_size
+        print("NaN step size due to floating point errors, not updating.")
+        return 0
+    
+    full_step = direction / step_size
 
     old_params = get_model_params(policy)   
     success, new_params= backtrack_line_search(policy, 
@@ -172,8 +172,7 @@ def trpo_update(policy, value_net, observations, actions, returns, mask,gamma):
                                                policy.backtrack_coeff)
 
     set_flat_params_to(policy, new_params)
-    print(f"grad_norm: {-g_vect.norm()} average return: {rewards_t.mean()}")
-    return loss
+    print(f"grad_norm: {-g_vect.norm()}")
 
 def update_value_network(network,optimizer, obs, returns):
     obs_t = torch.Tensor(np.array(obs)).permute(0,3,1,2)
@@ -182,7 +181,5 @@ def update_value_network(network,optimizer, obs, returns):
 
     optimizer.zero_grad() 
     loss_fn = ((values - returns).pow(2)).mean()
-    print("Value function loss:", loss_fn.item())
     loss_fn.backward()
     optimizer.step()    
-    return loss_fn.item()

@@ -5,12 +5,14 @@ import torch.nn as nn
 from torch.optim import Adam
 from torch.distributions.categorical import Categorical
 from torch.autograd.functional import hessian
+from torch.utils.tensorboard import SummaryWriter
 
 import numpy as np 
 from tqdm import tqdm
 
 from torch_rl.trpo import * 
 
+writer = SummaryWriter()
 
 env = gym.make("CarRacing-v2",  
                continuous=False)
@@ -18,10 +20,10 @@ env = gym.make("CarRacing-v2",
 state_dim = env.observation_space.shape
 action_space = env.action_space.n
 batch_size= 2000
-num_epochs = 10
+num_epochs = 50
 
-gamma = 0.9954
-KL_bound = 1e-2
+gamma = 0.99
+KL_bound = 0.01
 backtrack_coeff = 0.8
 damping = 1 
 l2_value = 1e-3
@@ -70,9 +72,11 @@ def train_epoch():
         else:
             mask.append(1)
 
-    policy_loss = trpo_update(policy,value_net,observations,actions, returns, mask,gamma)
-    value_loss = update_value_network(value_net,value_optimizer, observations,returns)
+    trpo_update(policy,value_net,observations,actions, returns, mask,gamma)
+    update_value_network(value_net,value_optimizer, observations,returns)
+    return np.mean(episode_rewards)
  
 
 for i in range(num_epochs):
-    train_epoch()
+    average_return = train_epoch()
+    writer.add_scalar('Average return over batch:',average_return,i)
