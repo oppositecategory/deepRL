@@ -31,14 +31,25 @@ class Policy(ConvNet):
 
 
 @torch.no_grad()
-def estimate_advantage(value_net,states, rewards, actions, masks,gamma):
-    # Estimating the advantage using a Value func approximator and TD difference.
+def estimate_advantage(value_net,states, rewards, actions, masks,gamma,tau):
     values = value_net(states)
-    advantages = torch.zeros(states.size(0),1)
 
-    for i in range(values.size(0)-1):
-        advantages[i,0] = rewards[i] + gamma* values[i+1] - masks[i] * values[i]
-    return advantages
+    returns = torch.Tensor(actions.size(0),1)
+    deltas = torch.Tensor(actions.size(0),1)
+    advantages = torch.Tensor(actions.size(0),1)
+
+    prev_return = 0
+    prev_value = 0
+    prev_advantage = 0
+    for i in reversed(range(rewards.size(0))):
+        returns[i] = rewards[i] + gamma * prev_return * masks[i]
+        deltas[i] = rewards[i] + gamma * prev_value * masks[i] - values.data[i]
+        advantages[i] = deltas[i] + gamma * tau * prev_advantage * masks[i]
+
+        prev_return = returns[i, 0]
+        prev_value = values.data[i, 0]
+        prev_advantage = advantages[i, 0]
+    return returns, advantages
 
 def conjugate_gradient(Hv,b,N):
     """
@@ -62,7 +73,7 @@ def conjugate_gradient(Hv,b,N):
     return x 
 
 @torch.no_grad()
-def backtrack_line_search(model,f,grad_f,x,p,alpha_0,c=0.1,max=10):
+def backtrack_line_search(model,f,grad_f,x,p,alpha_0=0.5,c=0.1,max=10):
     """ Implements backtrack line search.
         Args:
             - f: the function we wish to optimize
@@ -75,22 +86,24 @@ def backtrack_line_search(model,f,grad_f,x,p,alpha_0,c=0.1,max=10):
     m = torch.dot(grad_f,p)
     alpha = alpha_0
     initial_loss = f(False).data
-    t = -c*m
     for j in range(max):
         candidate_params = x + alpha * p
         set_flat_params_to(model, candidate_params)
-        curr = get_model_params(model)
-        curr_loss = f(False)
-        print(f"{j}/{max} Current loss: {curr_loss}")
-        if initial_loss - curr_loss >= alpha*t:
+        curr_loss = f(False).data 
+        loss_diff = initial_loss - curr_loss
+        expected_diff = m*alpha
+        ratio = loss_diff / expected_diff
+        print(f"ratio: {ratio}, improvement: {loss_diff}")
+        if ratio.item() > c and loss_diff.item() > 0:
+            print(f"Reached expected improvement")
             return True, candidate_params
         alpha = alpha*alpha
     return False,x + p
 
 
-def trpo_update(policy, value_net, observations, actions, returns, mask,gamma):
+def trpo_update(policy, value_net, observations, actions, rewards, mask,gamma,tau):
     actions_t = torch.Tensor(np.array(actions)) 
-    rewards_t = torch.Tensor(returns)
+    rewards_t = torch.Tensor(rewards)
     obs_t = torch.Tensor(np.array(observations)).permute(0,3,1,2)
     mask = torch.Tensor(mask)
 
@@ -127,7 +140,7 @@ def trpo_update(policy, value_net, observations, actions, returns, mask,gamma):
 
         return flat_grad_grad_kl + v * damping
     
-    advantages = estimate_advantage(value_net,obs_t,rewards_t,actions_t,mask,gamma)
+    advantages,returns = estimate_advantage(value_net,obs_t,rewards_t,actions_t,mask,gamma,tau)
     advantages = (advantages - advantages.mean()) / advantages.std() # Normalize advantages
     actions_probs = policy.log_probs(obs_t,actions_t)
     actions_probs_old = actions_probs.data
@@ -156,11 +169,7 @@ def trpo_update(policy, value_net, observations, actions, returns, mask,gamma):
     # The numerator is 0.02~delta*2 which is >>> then the gradients with higher probability for exploding.
     denom = 0.5*torch.dot(direction,-g_vect)
     step_size = torch.sqrt(abs(denom)/policy.KL_bound)      
-    
-    if torch.isnan(step_size):
-        print("NaN step size due to floating point errors, not updating.")
-        return 0
-    
+        
     full_step = direction / step_size
 
     old_params = get_model_params(policy)   
@@ -173,6 +182,7 @@ def trpo_update(policy, value_net, observations, actions, returns, mask,gamma):
 
     set_flat_params_to(policy, new_params)
     print(f"grad_norm: {-g_vect.norm()}")
+    return returns
 
 def update_value_network(network,optimizer, obs, returns):
     obs_t = torch.Tensor(np.array(obs)).permute(0,3,1,2)

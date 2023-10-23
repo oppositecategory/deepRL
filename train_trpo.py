@@ -5,14 +5,11 @@ import torch.nn as nn
 from torch.optim import Adam
 from torch.distributions.categorical import Categorical
 from torch.autograd.functional import hessian
-from torch.utils.tensorboard import SummaryWriter
-
 import numpy as np 
 from tqdm import tqdm
 
 from torch_rl.trpo import * 
 
-writer = SummaryWriter()
 
 env = gym.make("CarRacing-v2",  
                continuous=False)
@@ -23,6 +20,7 @@ batch_size= 2000
 num_epochs = 50
 
 gamma = 0.99
+tau = 0.97
 KL_bound = 0.01
 backtrack_coeff = 0.8
 damping = 1 
@@ -43,8 +41,8 @@ def test_trpo():
     returns = list(reward_to_go(rewards))
     mask = [1 if i < 49 else 0 for i in range(50)]
 
-    trpo_update(policy,value_net,observations,actions, returns, mask,gamma)
-    value_loss = update_value_network(value_net,value_optimizer, observations,returns)
+    trpo_update(policy,value_net,observations,actions, rewards, mask,gamma,tau)
+    # value_loss = update_value_network(value_net,value_optimizer, observations,returns)
 
 def train_epoch():
     obs, info = env.reset()
@@ -53,6 +51,8 @@ def train_epoch():
     returns = []
     episode_count = 0
     mask = []
+    episode_rewards = []
+    episode_returns = []
     for frame in tqdm(range(batch_size)):
         observations.append(obs.copy())
         action = policy.sample_action(torch.as_tensor(obs,dtype=torch.float32).permute(2,0,1).unsqueeze(0))
@@ -61,22 +61,26 @@ def train_epoch():
         obs, reward, terminated, truncated, info = env.step(action)
 
         actions.append(action)
+        episode_rewards.append(reward)
         rewards.append(reward)
 
         if terminated or truncated:
             obs, info = env.reset()
-            returns += list(reward_to_go(rewards))
-            episode_rewards.append(np.sum(rewards))
             mask.append(0)
-            rewards = []
         else:
             mask.append(1)
 
-    trpo_update(policy,value_net,observations,actions, returns, mask,gamma)
+    returns = trpo_update(policy,value_net,observations,actions, rewards, mask,gamma,tau)
     update_value_network(value_net,value_optimizer, observations,returns)
-    return np.mean(episode_rewards)
+    return torch.mean(returns).item()
  
 
+returns = []
 for i in range(num_epochs):
     average_return = train_epoch()
-    writer.add_scalar('Average return over batch:',average_return,i)
+    print(f"Averaged return in batch: {average_return}")
+    returns.append(average_return)
+
+torch.save(policy.state_dict(),'policy.pt')
+returns = np.array(returns)
+np.save('results',returns)
