@@ -9,7 +9,7 @@ from torch.autograd.functional import hessian
 import numpy as np 
 from tqdm import tqdm
 
-from deeprl.trpo import * 
+from torch_rl.trpo import * 
 
 
 env = gym.make("CarRacing-v2",  

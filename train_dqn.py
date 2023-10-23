@@ -2,7 +2,8 @@ import gymnasium as gym
 import torch
 import torch.nn as nn
 from torch.optim import Adam
-from deeprl import dqn
+
+from torch_rl import dqn
 import numpy as np 
 from tqdm import tqdm
 import matplotlib as mpl

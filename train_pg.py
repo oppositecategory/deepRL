@@ -10,8 +10,8 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 mpl.use('tkagg')
 
-from deeprl.policy_gradient import policy_gradient_update
-from deeprl.utils import reward_to_go
+from torch_rl.policy_gradient import policy_gradient_update
+from torch_rl.utils import reward_to_go
 
 #NOTE: This is written using the old gym repo and not the updated gymnaisum.
 
