@@ -4,64 +4,9 @@ from torch.optim import Adam
 from torch.distributions.categorical import Categorical
 from torch.autograd.functional import hessian
 
+from .models.continuous_policy import ContinuousPolicy
+from .models.discrete_policy import DiscretePolicy
 from .utils import *
-
-class ConvPolicy(ConvNet):
-    def __init__(self, 
-                input_dim,
-                output_dim,
-                KL_bound=0.001,
-                backtrack_coeff = 0.8,
-                filters=[(16, 4,2)],   
-                hidden_dim=128):
-        super().__init__(input_dim,output_dim,filters,hidden_dim)
-        self.KL_bound = torch.Tensor([KL_bound])
-        self.backtrack_coeff = torch.Tensor([backtrack_coeff])
-
-    def sample_action(self, x):
-        logits = self.forward(x)
-        action = Categorical(logits=logits).sample().item()
-        return action
-    
-    def log_probs(self, x,actions_t):
-        logits = self.forward(x)
-        print("Logits:",logits)
-        actions_distribution = Categorical(logits=logits)
-        log_probs = actions_distribution.log_prob(actions_t)
-        return log_probs
-
-class MLP(nn.Module):
-    def __init__(self,
-                 input_dim,
-                 output_dim,
-                 hidden_dim=64,
-                 KL_bound=0.001,
-                 backtrack_coeff = 0.8):
-        super().__init__()
-        self.KL_bound = torch.Tensor([KL_bound])
-        self.backtrack_coeff = torch.Tensor([backtrack_coeff])
-
-        self.layer1 =  nn.Linear(input_dim,hidden_dim)
-        self.layer2 =  nn.Linear(hidden_dim,hidden_dim)
-        self.layer3 =  nn.Linear(hidden_dim,output_dim)
-    
-    def forward(self,x):
-        x = self.layer1(x)
-        x = nn.functional.relu(x)
-        x = self.layer2(x)
-        x = nn.functional.relu(x)
-        x = self.layer3(x)
-        x = torch.softmax(x, dim=1)
-        return x
-    
-    def sample_action(self, x):
-        probs = self.forward(x)
-        action = probs.multinomial(1)
-        return action.item()
-    
-    def log_probs(self, x,actions_t):
-        probs = self.forward(x)
-        return torch.log(probs.gather(1, actions_t.long().unsqueeze(1)))
 
 @torch.no_grad()
 def estimate_advantage(value_net,states, rewards, actions, masks,gamma,tau):
@@ -115,23 +60,25 @@ def trpo_update(policy, value_net,value_optimizer, obs, actions, rewards, mask,g
     rewards_t = torch.Tensor(rewards)
     mask = torch.Tensor(mask)
 
-    def kl_fn():
-        """
-        NOTE: The KL Divergence is only needed for it's Hessian and it's evaluated at the old policy parameters.
-        """
+    def kl_d():
         action_probs1 = policy(obs_t)
         action_probs0 = action_probs1.data
         kl = action_probs0 * (torch.log(action_probs0) - torch.log(action_probs1))
         return kl.sum(1,keepdim=True)
-
+    
+    def kl_c():
+        mean, log_std, std = policy(obs_t)
+        mean0, log_std0 , std0 = mean.data, log_std.data, std.data
+        var, var0 = std.pow(2), std0.pow(2)
+        kl = log_std - log_std0 + (mean0-mean).pow(2)/ (2*std.pow(2))
+        return kl.sum(1,keepdim=True)
+    
+    if isinstance(policy, DiscretePolicy):
+        kl_fn = kl_d
+    else:
+        kl_fn = kl_c
 
     def Hv(v):
-        """
-        This function implements a neat trick to calculate H@v where H=the Hessian of the averaged KL divergence.
-        Considering we are only interested in solution to Hs=g using conjugate gradient, we are basically only
-        intersted in the matrix-product Hx and not H itself. Hence it can be shown that the Hessian-vector product 
-        is equal to derivative of the product of the first derivative of KL w.r.t to parameters multiplied by the input.
-        """
         damping = 1e-2 # Stabilizes error
         kl = kl_fn()
         kl = kl.mean()
@@ -155,11 +102,16 @@ def trpo_update(policy, value_net,value_optimizer, obs, actions, rewards, mask,g
     value_optimizer.step()   
 
     advantages = (advantages - advantages.mean()) / advantages.std() # Normalize advantages
-    with torch.no_grad():
-        old_policy = policy(obs_t)
-        actions_probs_old = policy.log_probs(obs_t,actions_t)
-    
 
+
+    with torch.no_grad():
+        # Note that in case of continous policy the old_policy variable will be a tuple
+        actions_probs_old = policy.log_probs(obs_t,actions_t)
+        if isinstance(policy,DiscretePolicy):
+            old_policy = policy(obs_t)
+        else:
+            mean_old, log_std_old, std_old = policy(obs_t)
+    
     def loss_fn(grad=True):
         if grad:
             actions_probs = policy.log_probs(obs_t,actions_t)
@@ -176,13 +128,8 @@ def trpo_update(policy, value_net,value_optimizer, obs, actions, rewards, mask,g
 
     # Approximate the inverse Hessian of the KL divergence using CG algorithm.
     direction = conjugate_gradient(Hv, -g_vect,10)
-
-    # To handle cases of NaN resulting from floating-point errors it seems
-    # it's better to swap the denomanator and numerator to reduce risk of NaN.
-    # The numerator is 0.02~delta*2 which is >>> then the gradients with higher probability for exploding.
     denom = 0.5*torch.dot(direction,-g_vect)
-
-    step_size = torch.sqrt(policy.KL_bound/denom)      
+    step_size = torch.sqrt(policy.KL_bound/abs(denom))
     full_step = direction * step_size
 
     old_params = get_model_params(policy)   
@@ -191,14 +138,26 @@ def trpo_update(policy, value_net,value_optimizer, obs, actions, rewards, mask,g
     for i in range(10):
         new_params = old_params + fraction * full_step
         set_flat_params_to(policy, new_params)
-        new_policy = policy(obs_t)
+
+        if isinstance(policy,DiscretePolicy):
+            new_policy = policy(obs_t)
+            kl = old_policy * torch.log(old_policy/new_policy).sum(1,keepdim=True)
+        else:
+            mean_new, log_std_new, std_new = policy(obs_t)
+            var_old, var_new = std_old.pow(2), std_new.pow(2)
+            new_probs = policy.log_probs(obs_t,actions_t)
+            # kl = log_std_old - log_std_new + (std_old.pow(2) + (mean_old - mean_new).pow(2)) / (2.0 * std_new.pow(2)) - 0.5
+            kl = log_std_new - log_std_old + (mean_new-mean_old).pow(2)/ ( 2*log_std_old.pow(2))
+            kl = kl.sum(1,keepdim=True)
+
+        kl = kl.mean(dim=0) 
         loss = loss_fn(False)
-        kl = old_policy * torch.log(old_policy/new_policy).sum(1,keepdim=True)
-        kl = kl.mean()
         print(f"Loss: {loss.item()}, KL: {kl.item()}")
-        if kl < policy.KL_bound:
+        if kl < policy.KL_bound and kl > 0:
             print("Reached constraint-solving parameters.")
             succees = True
+            break
+        elif kl < 0:
             break
         fraction = fraction * policy.backtrack_coeff
 

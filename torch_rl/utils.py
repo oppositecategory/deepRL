@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 import numpy as np
+import matplotlib.pyplot as plt 
 
 def conv_block(in_f, out_f, kernel_size, stride):
     return nn.Sequential(
@@ -78,3 +79,6 @@ def rgb2gray(rgb):
     r, g, b = rgb[:,:,0], rgb[:,:,1], rgb[:,:,2]
     gray = 0.2989 * r + 0.5870 * g + 0.1140 * b
     return gray
+
+
+

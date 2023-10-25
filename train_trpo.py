@@ -1,4 +1,5 @@
 import gymnasium as gym
+from gymnasium.spaces.box import Box
 
 import torch
 import torch.nn as nn
@@ -8,19 +9,29 @@ from torch.autograd.functional import hessian
 import numpy as np 
 from tqdm import tqdm
 
-from torch_rl.trpo import * 
+from torch_rl.trpo import trpo_update 
+from torch_rl.models.discrete_policy import DiscretePolicy
+from torch_rl.models.continuous_policy import ContinuousPolicy
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt 
 mpl.use('tkagg')
 
-env_name = "LunarLander-v2"
-env = gym.make(env_name)
-mode = 'vector'
-# NOTE: mode can be either vector for vector input or rgb for raw rgb.
+import os 
 
-batch_size= 5000
-num_epochs = 200
+env_name = "BipedalWalker-v3"
+env = gym.make(env_name)
+state_dim = env.observation_space.shape[0]
+
+if isinstance(env.action_space,Box):
+    action_space = env.action_space.shape[0]
+else:
+    action_space = env.action_space.n
+
+
+
+batch_size= 10000
+num_epochs = 50
 
 gamma = 0.99
 tau = 0.97
@@ -28,32 +39,68 @@ KL_bound = 0.01
 backtrack_coeff = 0.8
 l2_value = 1e-3
 
-if mode == 'vector':
-    state_dim = env.observation_space.shape[0]
-    action_space = env.action_space.n
+# if mode == 'vector':
+#     state_dim = env.observation_space.shape[0]
+#     action_space = env.action_space.n
 
-    policy = MLP(input_dim=state_dim,
-             output_dim=action_space)
-    value_net = nn.Sequential(
+#     policy = MLP(input_dim=state_dim,
+#              output_dim=action_space)
+#     value_net = nn.Sequential(
+#             nn.Linear(state_dim,64),
+#             nn.ReLU(),
+#             nn.Linear(64,64),
+#             nn.ReLU(),
+#             nn.Linear(64,1)
+#     )
+# elif mode == 'rgb':
+#     state_dim = env.observation_space.shape
+#     action_space = env.action_space.n
+#     policy = Policy(input_dim=state_dim,
+#                     output_dim=action_space)
+
+#     value_net = ConvNet(input_dim=state_dim,  
+#                         output_dim=1,
+#                         hidden_dim=64)
+# else:
+#     raise Exception('invalid mode, can be either rgb or vector.')
+
+
+# policy = DiscretePolicy(p_network,
+#                         KL_bound = KL_bound,
+#                         backtrack_coeff = backtrack_coeff)
+policy = ContinuousPolicy(input_dim=state_dim,
+                          output_dim=action_space,
+                          KL_bound = KL_bound,
+                          backtrack_coeff = backtrack_coeff)
+value_net = nn.Sequential(
             nn.Linear(state_dim,64),
             nn.ReLU(),
             nn.Linear(64,64),
             nn.ReLU(),
             nn.Linear(64,1)
-    )
-elif mode == 'rgb':
-    state_dim = env.observation_space.shape
-    action_space = env.action_space.n
-    policy = Policy(input_dim=state_dim,
-                    output_dim=action_space)
-
-    value_net = ConvNet(input_dim=state_dim,  
-                        output_dim=1,
-                        hidden_dim=64)
-else:
-    raise Exception('invalid mode, can be either rgb or vector.')
-
+)
 value_optimizer = Adam(value_net.parameters(), lr=l2_value)
+
+# if f'policy_{env_name}.pt' in os.listdir():
+#     print("Found policy weights.")
+#     policy.load_state_dict(torch.load(f'policy_{env_name}.pt'))
+
+# if 'value_{env_name}.pt' in os.listdir():
+#     print("Found value weights.")       
+#     value_net.load_state_dict(torch.load(f'value_{env_name}.pt'))
+
+
+def plot_results(file_name):
+    returns = np.load(file_name)
+
+    plt.title("Return value averaged over epoch")
+    plt.xlabel("Epoch")
+    plt.ylabel("Return value")
+    plt.grid()
+
+
+    plt.plot(range(num_epochs),returns)
+    plt.show()
 
 
 def test_trpo():
@@ -108,20 +155,20 @@ def train(save=False):
 
     if save:
         torch.save(policy.state_dict(),f'policy_{env_name}.pt')
+        torch.save(value_net.state_dict(),f'value_{env_name}.pt')
     returns = np.array(returns)
     np.save(f'{env_name}_experiment',returns)
 
-def plot_results(file_name):
-    returns = np.load(file_name)
 
-    plt.title("Return value averaged over epoch")
-    plt.xlabel("Epoch")
-    plt.ylabel("Return value")
-    plt.grid()
+def test_model(model_path):
+    obs, info = env.reset()
+    terminated = False 
+    while not terminated:
+        env.render() 
+        action = policy.sample_action(process_input(obs))
+        # action = env.action_space.sample()
+        obs, reward, terminated, truncated, info = env.step(action)
 
 
-    plt.plot(range(num_epochs),returns)
-    plt.show()
-
-# train(True)
-plot_results('LunarLander-v2_experiment.npy')
+train()
+# plot_results("BipedalWalker-v3_experiment.npy")
