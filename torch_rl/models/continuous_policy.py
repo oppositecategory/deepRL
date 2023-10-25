@@ -4,7 +4,7 @@ import numpy as np
 from torch.distributions.normal import Normal
 
 class ContinuousPolicy(nn.Module):
-    def __init__(self,input_dim,output_dim,hidden_dim=64,log_std=1,**kwargs):
+    def __init__(self,input_dim,output_dim,hidden_dim=64,log_std=0,**kwargs):
         # Assume the network outputs both mean and log_std for each action.
         # For environment with N actions the output would be Nx2 and for batched: BxNx2.
         super().__init__()
@@ -15,7 +15,7 @@ class ContinuousPolicy(nn.Module):
 
         self.mean = nn.Linear(hidden_dim,output_dim)
 
-        self.log_std = nn.Parameter(torch.ones(1,output_dim)*0)
+        self.log_std = nn.Parameter(torch.ones(1,output_dim)*log_std)
 
 
     

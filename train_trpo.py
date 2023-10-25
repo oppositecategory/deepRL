@@ -171,4 +171,3 @@ def test_model(model_path):
 
 
 train()
-# plot_results("BipedalWalker-v3_experiment.npy")

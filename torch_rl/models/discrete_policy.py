@@ -26,3 +26,4 @@ class DiscretePolicy(nn.Module):
     def log_probs(self, x,actions):
         probs = self.forward(x)
         return torch.log(probs.gather(1, actions.long().unsqueeze(1)))
+    

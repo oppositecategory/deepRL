@@ -146,7 +146,6 @@ def trpo_update(policy, value_net,value_optimizer, obs, actions, rewards, mask,g
             mean_new, log_std_new, std_new = policy(obs_t)
             var_old, var_new = std_old.pow(2), std_new.pow(2)
             new_probs = policy.log_probs(obs_t,actions_t)
-            # kl = log_std_old - log_std_new + (std_old.pow(2) + (mean_old - mean_new).pow(2)) / (2.0 * std_new.pow(2)) - 0.5
             kl = log_std_new - log_std_old + (mean_new-mean_old).pow(2)/ ( 2*log_std_old.pow(2))
             kl = kl.sum(1,keepdim=True)
 
