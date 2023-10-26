@@ -26,4 +26,9 @@ class DiscretePolicy(nn.Module):
     def log_probs(self, x,actions):
         probs = self.forward(x)
         return torch.log(probs.gather(1, actions.long().unsqueeze(1)))
-    
+
+    def kl_divergence(self,x):
+        action_probs1 = self.forward(x)
+        action_probs0 = action_probs1.data
+        kl = action_probs0 * (torch.log(action_probs0) - torch.log(action_probs1))
+        return kl.sum(1,keepdim=True)

@@ -80,5 +80,12 @@ def rgb2gray(rgb):
     gray = 0.2989 * r + 0.5870 * g + 0.1140 * b
     return gray
 
+def discrete_kl_divergence(probs, probs1):
+    return probs * torch.log(probs/probs1).sum(1,keepdim=True)
+
+def gaussian_kl_divergence(mu1, log_std1, mu2, log_std2):
+    kl = log_std2 - log_std1 + (mu2-mu1).pow(2)/ ( 2*log_std2.pow(2))
+    return kl.sum(1,keepdim=True)
+
 
 

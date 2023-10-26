@@ -4,7 +4,7 @@ from torch.optim import Adam
 from torch.distributions.categorical import Categorical
 from torch.autograd.functional import hessian
 
-from .models.continuous_policy import ContinuousPolicy
+from .models.continuous_policy import GaussianPolicy
 from .models.discrete_policy import DiscretePolicy
 from .utils import *
 
@@ -12,9 +12,9 @@ from .utils import *
 def estimate_advantage(value_net,states, rewards, actions, masks,gamma,tau):
     values = value_net(states)
 
-    returns = torch.Tensor(actions.size(0),1)
-    deltas = torch.Tensor(actions.size(0),1)
-    advantages = torch.Tensor(actions.size(0),1)
+    returns = torch.Tensor(rewards.size(0),1)
+    deltas = torch.Tensor(rewards.size(0),1)
+    advantages = torch.Tensor(rewards.size(0),1)
 
     prev_return = 0
     prev_value = 0
@@ -60,27 +60,9 @@ def trpo_update(policy, value_net,value_optimizer, obs, actions, rewards, mask,g
     rewards_t = torch.Tensor(rewards)
     mask = torch.Tensor(mask)
 
-    def kl_d():
-        action_probs1 = policy(obs_t)
-        action_probs0 = action_probs1.data
-        kl = action_probs0 * (torch.log(action_probs0) - torch.log(action_probs1))
-        return kl.sum(1,keepdim=True)
-    
-    def kl_c():
-        mean, log_std, std = policy(obs_t)
-        mean0, log_std0 , std0 = mean.data, log_std.data, std.data
-        var, var0 = std.pow(2), std0.pow(2)
-        kl = log_std - log_std0 + (mean0-mean).pow(2)/ (2*std.pow(2))
-        return kl.sum(1,keepdim=True)
-    
-    if isinstance(policy, DiscretePolicy):
-        kl_fn = kl_d
-    else:
-        kl_fn = kl_c
-
     def Hv(v):
         damping = 1e-2 # Stabilizes error
-        kl = kl_fn()
+        kl = policy.kl_divergence(obs_t)
         kl = kl.mean()
 
         grads = torch.autograd.grad(kl, policy.parameters(), create_graph=True)
@@ -105,7 +87,6 @@ def trpo_update(policy, value_net,value_optimizer, obs, actions, rewards, mask,g
 
 
     with torch.no_grad():
-        # Note that in case of continous policy the old_policy variable will be a tuple
         actions_probs_old = policy.log_probs(obs_t,actions_t)
         if isinstance(policy,DiscretePolicy):
             old_policy = policy(obs_t)
@@ -128,7 +109,7 @@ def trpo_update(policy, value_net,value_optimizer, obs, actions, rewards, mask,g
 
     # Approximate the inverse Hessian of the KL divergence using CG algorithm.
     direction = conjugate_gradient(Hv, -g_vect,10)
-    denom = 0.5*torch.dot(direction,-g_vect)
+    denom = 0.5*direction.dot(Hv(direction))
     step_size = torch.sqrt(policy.KL_bound/abs(denom))
     full_step = direction * step_size
 
@@ -141,22 +122,17 @@ def trpo_update(policy, value_net,value_optimizer, obs, actions, rewards, mask,g
 
         if isinstance(policy,DiscretePolicy):
             new_policy = policy(obs_t)
-            kl = old_policy * torch.log(old_policy/new_policy).sum(1,keepdim=True)
+            kl = discrete_kl_divergence(old_policy,new_policy)
         else:
             mean_new, log_std_new, std_new = policy(obs_t)
-            var_old, var_new = std_old.pow(2), std_new.pow(2)
-            new_probs = policy.log_probs(obs_t,actions_t)
-            kl = log_std_new - log_std_old + (mean_new-mean_old).pow(2)/ ( 2*log_std_old.pow(2))
-            kl = kl.sum(1,keepdim=True)
+            kl = gaussian_kl_divergence(mean_old, log_std_old, mean_new, log_std_new)
 
-        kl = kl.mean(dim=0) 
+        kl = kl.mean() 
         loss = loss_fn(False)
         print(f"Loss: {loss.item()}, KL: {kl.item()}")
-        if kl < policy.KL_bound and kl > 0:
+        if kl < policy.KL_bound:
             print("Reached constraint-solving parameters.")
             succees = True
-            break
-        elif kl < 0:
             break
         fraction = fraction * policy.backtrack_coeff
 

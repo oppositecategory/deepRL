@@ -11,7 +11,7 @@ from tqdm import tqdm
 
 from torch_rl.trpo import trpo_update 
 from torch_rl.models.discrete_policy import DiscretePolicy
-from torch_rl.models.continuous_policy import ContinuousPolicy
+from torch_rl.models.continuous_policy import GaussianPolicy
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt 
@@ -19,6 +19,7 @@ mpl.use('tkagg')
 
 import os 
 
+# env_name = "CartPole-v1"
 env_name = "BipedalWalker-v3"
 env = gym.make(env_name)
 state_dim = env.observation_space.shape[0]
@@ -30,8 +31,8 @@ else:
 
 
 
-batch_size= 10000
-num_epochs = 50
+batch_size= 5000    
+num_epochs = 100
 
 gamma = 0.99
 tau = 0.97
@@ -39,39 +40,15 @@ KL_bound = 0.01
 backtrack_coeff = 0.8
 l2_value = 1e-3
 
-# if mode == 'vector':
-#     state_dim = env.observation_space.shape[0]
-#     action_space = env.action_space.n
-
-#     policy = MLP(input_dim=state_dim,
-#              output_dim=action_space)
-#     value_net = nn.Sequential(
-#             nn.Linear(state_dim,64),
-#             nn.ReLU(),
-#             nn.Linear(64,64),
-#             nn.ReLU(),
-#             nn.Linear(64,1)
-#     )
-# elif mode == 'rgb':
-#     state_dim = env.observation_space.shape
-#     action_space = env.action_space.n
-#     policy = Policy(input_dim=state_dim,
-#                     output_dim=action_space)
-
-#     value_net = ConvNet(input_dim=state_dim,  
-#                         output_dim=1,
-#                         hidden_dim=64)
-# else:
-#     raise Exception('invalid mode, can be either rgb or vector.')
-
-
-# policy = DiscretePolicy(p_network,
-#                         KL_bound = KL_bound,
-#                         backtrack_coeff = backtrack_coeff)
-policy = ContinuousPolicy(input_dim=state_dim,
+policy = DiscretePolicy(input_dim=state_dim,
+                        output_dim=action_space,
+                        KL_bound = KL_bound,
+                        backtrack_coeff = backtrack_coeff)
+policy = GaussianPolicy(input_dim=state_dim,
                           output_dim=action_space,
                           KL_bound = KL_bound,
                           backtrack_coeff = backtrack_coeff)
+
 value_net = nn.Sequential(
             nn.Linear(state_dim,64),
             nn.ReLU(),
@@ -79,15 +56,10 @@ value_net = nn.Sequential(
             nn.ReLU(),
             nn.Linear(64,1)
 )
+policy.load_state_dict(torch.load('policy_BipedalWalker-v3.pt'))
+value_net.load_state_dict(torch.load('value_BipedalWalker-v3.pt'))
+
 value_optimizer = Adam(value_net.parameters(), lr=l2_value)
-
-# if f'policy_{env_name}.pt' in os.listdir():
-#     print("Found policy weights.")
-#     policy.load_state_dict(torch.load(f'policy_{env_name}.pt'))
-
-# if 'value_{env_name}.pt' in os.listdir():
-#     print("Found value weights.")       
-#     value_net.load_state_dict(torch.load(f'value_{env_name}.pt'))
 
 
 def plot_results(file_name):
@@ -123,7 +95,8 @@ def train_epoch():
     observations, actions, rewards = [],[],[]
     episode_count = 0
     mask = []
-    reward_episode, num_episodes,reward_epoch = 0,0,0
+    num_episodes,reward_epoch = 0,0
+    reward_episode = []
     for frame in tqdm(range(batch_size)):
         observations.append(obs.copy())
         action = policy.sample_action(process_input(obs))
@@ -133,18 +106,19 @@ def train_epoch():
 
         actions.append(action)
         rewards.append(reward)
-        reward_episode += reward 
-        if terminated or truncated:
+        reward_episode.append(reward)
+        if terminated or truncated or (len(reward_episode) >= 1600 and sum(reward_episode) < 300):
             obs, info = env.reset()
             mask.append(0)
-            reward_epoch += reward_episode
+            reward_epoch += sum(reward_episode)
             num_episodes+=1
-            reward_episode = 0
+            reward_episode = []
         else:
             mask.append(1)
 
     returns = trpo_update(policy,value_net,value_optimizer, observations,actions, rewards, mask,gamma,tau)
-    return reward_episode/num_episodes
+    print("Num of episodes carried out:", num_episodes)
+    return reward_epoch/num_episodes
  
 def train(save=False):
     returns = []
@@ -160,7 +134,7 @@ def train(save=False):
     np.save(f'{env_name}_experiment',returns)
 
 
-def test_model(model_path):
+def test_model():
     obs, info = env.reset()
     terminated = False 
     while not terminated:
@@ -168,6 +142,9 @@ def test_model(model_path):
         action = policy.sample_action(process_input(obs))
         # action = env.action_space.sample()
         obs, reward, terminated, truncated, info = env.step(action)
+        print(reward)
 
 
-train()
+# train(True)
+# plot_results('BipedalWalker-v3_experiment.npy')
+# test_model()

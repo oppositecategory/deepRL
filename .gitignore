@@ -5,6 +5,8 @@ __pycache__/
 
 .pyc
 runs/
+results/
+weights/
 
 # C extensions
 *.so
