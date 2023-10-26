@@ -19,8 +19,10 @@ mpl.use('tkagg')
 
 import os 
 
-# env_name = "CartPole-v1"
-env_name = "BipedalWalker-v3"
+env_name = 'Hopper-v4'
+# env_name = 'Humanoid-v4'
+# render_mode = None
+
 env = gym.make(env_name)
 state_dim = env.observation_space.shape[0]
 
@@ -29,21 +31,20 @@ if isinstance(env.action_space,Box):
 else:
     action_space = env.action_space.n
 
-
-
-batch_size= 5000    
-num_epochs = 100
+batch_size = 5000 
+num_epochs = 200
 
 gamma = 0.99
 tau = 0.97
 KL_bound = 0.01
-backtrack_coeff = 0.8
+backtrack_coeff = 0.5
 l2_value = 1e-3
 
-policy = DiscretePolicy(input_dim=state_dim,
-                        output_dim=action_space,
-                        KL_bound = KL_bound,
-                        backtrack_coeff = backtrack_coeff)
+
+# policy = DiscretePolicy(input_dim=state_dim,
+#                         output_dim=action_space,
+#                         KL_bound = KL_bound,
+#                         backtrack_coeff = backtrack_coeff)
 policy = GaussianPolicy(input_dim=state_dim,
                           output_dim=action_space,
                           KL_bound = KL_bound,
@@ -56,14 +57,16 @@ value_net = nn.Sequential(
             nn.ReLU(),
             nn.Linear(64,1)
 )
-policy.load_state_dict(torch.load('policy_BipedalWalker-v3.pt'))
-value_net.load_state_dict(torch.load('value_BipedalWalker-v3.pt'))
+
+if f'policy_{env_name}.pt' in os.listdir('weights'):
+    print("Detected previous weights...")
+    policy.load_state_dict(torch.load(f'weights/policy_{env_name}.pt'))
+    value_net.load_state_dict(torch.load(f'weights/value_{env_name}.pt'))
 
 value_optimizer = Adam(value_net.parameters(), lr=l2_value)
 
-
-def plot_results(file_name):
-    returns = np.load(file_name)
+def plot_results():
+    returns = np.load(f'results/{env_name}_experiment.npy')
 
     plt.title("Return value averaged over epoch")
     plt.xlabel("Epoch")
@@ -107,7 +110,7 @@ def train_epoch():
         actions.append(action)
         rewards.append(reward)
         reward_episode.append(reward)
-        if terminated or truncated or (len(reward_episode) >= 1600 and sum(reward_episode) < 300):
+        if terminated or truncated:
             obs, info = env.reset()
             mask.append(0)
             reward_epoch += sum(reward_episode)
@@ -128,23 +131,22 @@ def train(save=False):
         returns.append(average_return)
 
     if save:
-        torch.save(policy.state_dict(),f'policy_{env_name}.pt')
-        torch.save(value_net.state_dict(),f'value_{env_name}.pt')
+        torch.save(policy.state_dict(),f'weights/policy_{env_name}.pt')
+        torch.save(value_net.state_dict(),f'weights/value_{env_name}.pt')
     returns = np.array(returns)
-    np.save(f'{env_name}_experiment',returns)
+    np.save(f'results/{env_name}_experiment',returns)
+    plot_results()
 
 
 def test_model():
-    obs, info = env.reset()
-    terminated = False 
-    while not terminated:
-        env.render() 
-        action = policy.sample_action(process_input(obs))
-        # action = env.action_space.sample()
-        obs, reward, terminated, truncated, info = env.step(action)
-        print(reward)
+    for i in range(10):
+        obs, info = env.reset()
+        terminated = False 
+        while not terminated:
+            action = policy.sample_action(process_input(obs))
+            obs, reward, terminated, truncated, info = env.step(action)
+            print(reward)
 
 
-# train(True)
-# plot_results('BipedalWalker-v3_experiment.npy')
+train(True)
 # test_model()
