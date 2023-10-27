@@ -111,6 +111,7 @@ def trpo_update(policy, value_net,value_optimizer, obs, actions, rewards, mask,g
     direction = conjugate_gradient(Hv, -g_vect,10)
     denom = 0.5*direction.dot(Hv(direction))
     step_size = torch.sqrt(policy.KL_bound/abs(denom))
+    print(f"Lagrange multiplier: {step_size.item()}, Gradient norm: {g_vect.norm().item()}")
     full_step = direction * step_size
 
     old_params = get_model_params(policy)   

@@ -134,6 +134,9 @@ def train(save=False):
         torch.save(policy.state_dict(),f'weights/policy_{env_name}.pt')
         torch.save(value_net.state_dict(),f'weights/value_{env_name}.pt')
     returns = np.array(returns)
+    if f'results/{env_name}_experiment' in os.listdir('results'):
+        old =  np.load(f'results/{env_name}_experiment.npy')
+        results = np.concat([old,results])
     np.save(f'results/{env_name}_experiment',returns)
     plot_results()
 
